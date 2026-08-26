@@ -4190,7 +4190,7 @@ __txm_module_preamble:
     .word   0                               @ Reserved 15
 ----
 
-Two details of this preamble are easy to get wrong.
+Three details of this preamble are easy to get wrong.
 
 *The four entry-point words are relative to themselves, not to the base of the
 preamble.* The manager recovers the offset from the module base by adding the field's
@@ -4205,6 +4205,11 @@ All four GNU module ports use the same convention; the Cortex-M33 preamble spell
 *The two size words come from the linker script.* The manager rounds both up to the
 64-byte granule and maps exactly that much, so a literal that has fallen behind the
 real size of the module produces a fault in code that did nothing wrong.
+
+*The property word must carry both `+TXM_MODULE_USER_MODE+` and
+`+TXM_MODULE_MEMORY_PROTECTION+`.* This port requires them together, unlike the
+others, and a preamble carrying either alone is refused at load time. The module
+properties section below says why.
 
 ==== Module properties for Cortex-R52 using GNU
 
@@ -4243,6 +4248,32 @@ IAR +
 ARM +
 GNU
 |===
+
+*This port requires bits 0 and 1 together.* A preamble that asks for user mode
+without MPU protection, for MPU protection without user mode, or for neither, is
+refused by `+txm_module_manager_in_place_load()+` with
+`+TXM_MODULE_INVALID_PROPERTIES+`. Every other module port in the tree accepts a
+privileged or unprotected module, so this is a genuine difference and not an
+oversight; `+TXM_MODULE_MANAGER_REQUIRED_OPTIONS+` in
+`+ports_module/cortex_r52/gnu/inc/txm_module_port.h+` is where it is set.
+
+The reason is PMSAv8-R rather than policy. The port programs a module's region
+set only when both bits are present, and the scheduler closes the kernel's window
+over the module area before it dispatches a module thread -- the two regions
+describe the same memory and PMSAv8-R has no region priority. There is no
+background region to fall back on: per the Cortex-R52 TRM section 8.2.1 the
+EL1-controlled background region applies only when the MPU is disabled or when
+`+SCTLR.BR+` is set, and accesses from EL0 are faulted whenever the MPU is
+enabled. So a module that asked for user mode without protection would not run
+unprotected. It would have no mapping at all, and would abort on the fetch of its
+own first instruction. Refusing it at load time reports the problem where the
+property word can still be corrected.
+
+*Bit 2 is supported and optional.* A module that does not set it still loads and
+runs; it simply has no shared or external memory region granted to it. Note that
+`+txm_module_manager_external_memory_enable()+` does not itself check the bit, on
+this port or on any other, so a manager that grants a region to a module that did
+not ask for one is not refused.
 
 ==== Module linker for Cortex-R52 using GNU
 
@@ -4567,15 +4598,17 @@ board.
 cmake -B build_fvp -G Ninja -DCMAKE_TOOLCHAIN_FILE=cmake/cortex_r52.cmake \
       -DTX_R52_BUILD_FVP_EXAMPLE=ON -DTX_R52_BUILD_FVP_MODULE_EXAMPLE=ON .
 ninja -C build_fvp boot_check.elf demo_m2.elf demo_m3.elf demo_mpu.elf \
-                   demo_threadx.elf demo_clz.elf fvp_module.elf
+                   demo_threadx.elf demo_clz.elf fvp_module.elf \
+                   fvp_module_properties.elf
 ctest --test-dir build_fvp
 ----
 
-`+TX_R52_BUILD_FVP_MODULE_EXAMPLE+` adds `+fvp_module.elf+` to the suite; without it the
-suite is the base port's six default images. The images are excluded from the default target,
-so a bare `ninja` builds none of them and CTest then fails with "application file not
-found". `+ninja -C build_fvp run-module-r52+` runs the module image alone and shows its
-output.
+`+TX_R52_BUILD_FVP_MODULE_EXAMPLE+` adds `+fvp_module.elf+` and
+`+fvp_module_properties.elf+` to the suite; without it the suite is the base port's six
+default images. The images are excluded from the default target, so a bare `ninja`
+builds none of them and CTest then fails with "application file not found".
+Either image can be run alone with `+ninja -C build_fvp run-module-r52+` or
+`+ninja -C build_fvp run-module-properties-r52+`, which shows its output.
 
 The example loads the same module blob four times. Pass 1 runs it at the address it
 was linked into the manager image at, and pass 2 runs the same bytes from a staging
@@ -4586,6 +4619,16 @@ which is the other fault path. Pass 4 grants all five shared entries, exercises 
 refusal paths, and writes the one granule *between* two granted ones, which must
 fault. The image reports `MODULE RESULT: ALL CHECKS PASSED`, and the test runner
 treats a missing result line as a failure, so a hang cannot pass.
+
+`+fvp_module_properties.elf+` is the other half of the same question and a separate
+image because four of its six cases never run a module at all. It stages the same
+blob six times, changing only the preamble's property word, and checks each outcome
+against the contract above: the four combinations this port refuses must come back
+`+TXM_MODULE_INVALID_PROPERTIES+` and leave the instance and the manager's loaded
+count untouched, and the two it accepts must load, run in User mode and fault where
+they should -- the one granted no shared region on the shared area it never asked
+for, the one granted the status granule on the kernel's memory beyond it. It reports
+`MODULE PROPERTY RESULT: ALL CHECKS PASSED`.
 
 IMPORTANT: *A green run on the model says nothing about the region budget on
 silicon.* The AEM FVP is an architecture envelope model rather than a Cortex-R52
