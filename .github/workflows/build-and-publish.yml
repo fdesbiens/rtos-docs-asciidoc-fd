@@ -5,6 +5,7 @@ on:
     branches:
       - '*'
       - '!main'
+  workflow_dispatch:
 
 concurrency:
   group: run-${{ github.workflow }}-${{ github.ref }}
@@ -15,21 +16,26 @@ env:
 
 jobs:
   build:
-    if: github.repository == 'eclipse-threadx/rtos-docs-asciidoc'
+    if: >
+      github.repository == 'eclipse-threadx/rtos-docs-asciidoc' &&
+      github.ref_name != 'main'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           persist-credentials: false
           path: 'asciidoc'
       - name: Checkout external HTML repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           repository: ${{ env.TARGET_REPO }}
           ref: 'main'
           path: 'rtos-docs-html'
           token: ${{ secrets.DOCS_PUBLISH_TOKEN }}
+      - name: Checkout new branch for pages
+        working-directory: 'rtos-docs-html'
+        run: git checkout -B ${{ github.ref_name }}
       - name: Install Node.js
         uses: actions/setup-node@v5
         with:
@@ -41,15 +47,12 @@ jobs:
         run: npx antora antora-playbook.yml
         working-directory: ./asciidoc
       - name: push to rtos-docs-html
+        working-directory: 'rtos-docs-html'
         run: |
-          cd "${{ github.workspace }}/rtos-docs-html"
-
-          git checkout -B ${{ github.ref_name }}
-
           git config user.name "eclipse-threadx-bot"
           git config user.email "<threadx-bot@eclipse.org>"
           
           COMMIT_MESSAGE="Publish generated html pages from ${{ github.repository }}/${{ github.ref }}@${{ github.sha }}"
           git add .
           git commit -m "${COMMIT_MESSAGE}"
-          git push origin
+          git push origin HEAD:${{ github.ref_name }}
