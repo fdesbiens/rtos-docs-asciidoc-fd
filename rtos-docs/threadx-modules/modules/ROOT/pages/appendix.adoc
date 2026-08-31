@@ -4566,7 +4566,7 @@ not a caller's choice.
 | Read access only
 |===
 
-The contract this port implements has five properties an application has to design
+The contract this port implements has six properties an application has to design
 around.
 
 . *Five shared regions per module.* `+TXM_MODULE_MPU_SHARED_ENTRIES+` is 5, at MPU
@@ -4581,9 +4581,26 @@ around.
   `+TX_NO_MEMORY+` for an unaligned address too, and nothing at all about the alignment.
   A test written to cover the granule rule has to make its unaligned probe while
   entries remain, or it covers nothing.
+. *A zero `length`, or one whose last byte falls past the top of the address space,
+  returns `+TX_SIZE_ERROR+`.* Either would describe a region whose limit lies below
+  its base -- a zero length computes `base - 1` outright, and an end address that
+  wraps computes some low address -- so the grant is refused before any register is
+  written and before an entry is spent. An application that recovers from one still
+  has all five. The other module ports do not make this check; a Cortex-R52 build of
+  code moved from one of them may see `+TX_SIZE_ERROR+` where it used to see
+  `+TX_SUCCESS+`.
 . *A grant covers exactly `length` rounded up to the granule, and not the granule
   above that.* An adjacent granule the application did not grant is not reachable
-  from a granted one.
+  from a granted one. The rounding is the hardware's: `PRLAR` describes an inclusive
+  end of `LIMIT:0x3F`, so one granule is the smallest region that can be expressed
+  and there is no `length` that grants a module less. A one-byte grant hands the
+  module 64 bytes and a 65-byte grant hands it 128, and *the application owns every
+  byte of the rounded range* -- put nothing in it the module may not have.
+  The length the manager records, and therefore the length
+  `+_txm_module_manager_inside_data_check()+` validates a kernel call's pointers
+  against, is the unrounded one that was asked for, so a module can reach the surplus
+  bytes with a load or a store while a kernel call carrying a pointer into them is
+  refused. Pass a multiple of the granule and the two lengths agree.
 . *Read access is not implied.* Unlike the Cortex-R4 and ARM11 ports, where a module
   always has read access to shared memory and the attribute parameter only adds write
   access, this port programs the permission field it is given.
@@ -4628,8 +4645,13 @@ genuinely relocatable; both then write into the kernel's memory and take a data
 abort. Pass 3 branches into the kernel's memory instead and takes a prefetch abort,
 which is the other fault path. Pass 4 grants all five shared entries, exercises both
 refusal paths, and writes the one granule *between* two granted ones, which must
-fault. The image reports `MODULE RESULT: ALL CHECKS PASSED`, and the test runner
-treats a missing result line as a failure, so a hang cannot pass.
+fault. A fifth module is then loaded and unloaded without ever being started, only
+to probe the size guards: a zero-length grant and one that runs off the top of
+memory must each come back `+TX_SIZE_ERROR+` and leave the entry count where they
+found it, while a grant ending exactly at `0xFFFFFFFF` must be accepted. It is never
+started because a grant it accepts must not reach a real MPU region. The image
+reports `MODULE RESULT: ALL CHECKS PASSED`, and the test runner treats a missing
+result line as a failure, so a hang cannot pass.
 
 `+fvp_module_properties.elf+` is the other half of the same question and a separate
 image because four of its six cases never run a module at all. It stages the same
