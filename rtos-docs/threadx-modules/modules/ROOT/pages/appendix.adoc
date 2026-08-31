@@ -4365,6 +4365,17 @@ its entry information.
 directory holding the generated raw image has to be added to it with
 `-Wa,-I<binary directory>` on `+module_blob.S+`.
 
+Both examples, and the toolchain file they are built with, are A32: the port sets
+`-marm` for the manager and the module alike. The manager builds a module thread's
+first stack frame with the `T` bit taken from bit 0 of the module's shell entry
+pointer, so a module linked for Thumb is *meant* to start in Thumb state, but
+nothing in the tree demonstrates that it does. The rest of the path is what makes
+this worth stating rather than assuming: the position-independent flags above have
+to survive interworking, and module entry, the supervisor call dispatcher,
+preemption and fault recovery all cross between an A32 manager and the module.
+Until an example exercises those, treat a Thumb module as unvalidated on this port
+and build modules `-marm`.
+
 The two example builds are driven from their board's `CMakeLists.txt`; a module
 example has no `CMakeLists.txt` of its own. To build the model example:
 
