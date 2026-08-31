@@ -4083,16 +4083,27 @@ a region that does not exist and continuing.
 
 `+TXM_MODULE_MPU_FIRST_REGION+` being 8 also assumes the board support package uses
 regions 0 to 7 and no more. A board that needs more than eight kernel regions must
-either shrink the module block or accept the cost of reaching the overflow through
-`PRSELR`.
+either shrink the module block or move it, and moving it past region 15 changes the
+`MCR` encodings the scheduler emits.
 
-The choice of 8 to 15 for the module block is not arbitrary. The TRM gives direct
-`MCR` encodings for `PRBAR0` to `PRBAR15` and `PRLAR0` to `PRLAR15`. Region 16 and
-above are reachable only through `PRSELR`, which requires an `ISB` per region.
-Measured on an S32Z280, one region programmed through `PRSELR` costs 542
-to 604 cycles against 434 to 470 written directly, so the whole eight-entry block is
-written directly with a single barrier pair at the end. The cost of a module switch
-therefore does not vary with how many shared entries a module has been granted.
+The choice of 8 to 15 for the module block is not arbitrary. TRM section 8.4 encodes
+the region number into `CRm` and `opc2`, with regions 0 to 15 at CP15 `op1` 0 and
+regions 16 to 24 at `op1` 1, so every region on this core has a direct encoding and
+`PRSELR` is only the indirect alternative. What 8 to 15 buys is that all eight
+regions sit in the `op1` 0 range, which is the form measured on this part, and that
+they are contiguous, so the block is written as one unrolled sequence with a single
+barrier pair at the end. Measured on an S32Z280, one region programmed through
+`PRSELR` costs 542 to 604 cycles against 434 to 470 written directly, and `PRSELR`
+requires an `ISB` per region where the direct block needs one barrier pair in total.
+The cost of a module switch therefore does not vary with how many shared entries a
+module has been granted.
+
+NOTE: The TRM contradicts itself here. Sections 3.3.85 and 3.3.86, the register
+descriptions, state that direct access is provided to `PRBAR0` to `PRBAR15` and give
+only the `op1` 0 form; section 8.4 and Table 8-9 give both forms, and Table 8-9 also
+prints `opc2` 0 for the even limit registers where the prose of 8.4 says 1. The port
+uses `op1` 0 for the module block and `PRSELR` for the kernel's region 16 window,
+which is the half of the manual it has been measured against.
 
 ==== Protection granule for Cortex-R52 using GNU
 
@@ -4318,9 +4329,10 @@ stacks: the manager adds the start/stop and callback stack sizes to that figure
 itself, from the two stack-size words in the preamble.
 
 The manager's own linker script has three requirements that come from PMSAv8-R having
-no region priority. Two enabled regions that match the same address are CONSTRAINED
-UNPREDICTABLE, and on the S32Z280 the access aborts, so every overlap is a defect
-rather than a preference:
+no region priority. TRM section 8.1 lists an access that hits more than one region as
+a cause of a translation fault, so the abort seen on the S32Z280 is the architected
+result rather than part-specific behaviour, and every overlap is a defect rather than
+a preference:
 
 . *The kernel's writable region must end where the module area begins.* A module's
   data comes out of a pool in the module area, so a kernel data region that runs past
