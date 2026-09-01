@@ -1,5 +1,6 @@
 * xref:home:ROOT:index.adoc[Home]
 ** xref:home:ROOT:hardware-support.adoc[Hardware Support]
+*** xref:home:ROOT:cortex-r52-port.adoc[Cortex-R52 Port]
 ** xref:home:ROOT:releases-and-support.adoc[Releases and Support]
 ** xref:home:ROOT:security-updates.adoc[Security Updates]
 * xref:filex:ROOT:index.adoc[FileX]
